@@ -1,5 +1,6 @@
 from typing import Callable
 from crewai import Flow, LLM
+import os
 from crewai.flow.flow import start, listen
 from utils import read_metadata
 from tools.file_tools import FileReadTool, DocumentTooLargeError, InsufficientContentError
@@ -53,6 +54,54 @@ def handle_flow_error(func: Callable) -> Callable:
             return self.state
     return wrapper
 
+
+
+def create_llm(
+    *,
+    temperature: float,
+    max_tokens: int,
+    top_p: float,
+    frequency_penalty: float,
+    presence_penalty: float,
+    response_format=None,
+):
+    """Cria uma instância de LLM configurável via variáveis de ambiente.
+
+    Variáveis suportadas:
+    - LLM_MODEL: nome do modelo (ex: openai/gpt-4o, ollama/gpt-oss:20b)
+    - LLM_BASE_URL: ex: http://localhost:11434/v1 (para Ollama - rota OpenAI compatível)
+    """
+    model = os.getenv("LLM_MODEL", "").strip()
+    base_url = os.getenv("LLM_BASE_URL", "").strip()
+    
+    print(f"🔧 create_llm: Configuração do LLM:")
+    print(f"🔧 create_llm: - Model: '{model}'")
+    print(f"🔧 create_llm: - Base URL: '{base_url}'")
+    print(f"🔧 create_llm: - Temperature: {temperature}")
+    print(f"🔧 create_llm: - Max tokens: {max_tokens}")
+    print(f"🔧 create_llm: - Response format: {response_format}")
+    
+    if not model:
+        print(f"❌ create_llm: LLM_MODEL não definido!")
+        raise ValueError("LLM_MODEL não definido nas variáveis de ambiente")
+    
+    if not base_url and "ollama" in model.lower():
+        print(f"⚠️ create_llm: LLM_BASE_URL não definido para modelo Ollama, usando padrão")
+        base_url = "http://localhost:11434/v1"
+
+    llm = LLM(
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
+        frequency_penalty=frequency_penalty,
+        presence_penalty=presence_penalty,
+        # response_format=response_format,
+        base_url=(base_url or None),
+        timeout=1800 # 30 minutos
+    )
+    print(f"✅ create_llm: LLM criado com sucesso")
+    return llm
 
 
 class EditalAnalysisFlow(Flow[EditalState]):
@@ -134,89 +183,114 @@ class EditalAnalysisFlow(Flow[EditalState]):
     @handle_flow_error
     def generate_summary(self):
         """Gera resumo executivo e técnico do edital."""
-        llm = LLM(
-            model="gpt-4o",
+        llm = create_llm(
             temperature=0.7,
             max_tokens=2500,
             top_p=0.9,
             frequency_penalty=0.1,
             presence_penalty=0.1,
-            response_format=SummaryAnalysis
+            response_format=SummaryAnalysis,
         )
 
         # Faz a chamada ao LLM
-        response = llm.call(
-            messages=[
-                {"role": "system", "content": """Você é um especialista em resumir editais de licitação.
-                Sua tarefa é gerar DOIS tipos de resumo: executivo e técnico, ambos em formato Markdown e em PORTUGUÊS.
-                
-                RESUMO EXECUTIVO (executive_summary):
-                - Foco comercial e direto
-                - Máximo 150 palavras
-                - Formato Markdown limpo e profissional
-                - NÃO adicione nenhum título como 'Resumo Executivo' ou similar
-                - Incluir:
-                  * Cidade/UF
-                  * Valor Monetário total estimado (se disponível)
-                  * Data de abertura (com data e hora)
-                  * Quantidades principais (resumidas)
-                  * Contatos essenciais
-                - NÃO incluir especificações técnicas ou detalhes operacionais
-                - Linguagem comercial e acessível
-                
-                RESUMO TÉCNICO (technical_summary):
-                - Detalhado e completo
-                - Máximo 1500 palavras
-                - Formato Markdown estruturado e profissional
-                - NÃO adicione nenhum título como 'Resumo Técnico' ou similar
-                - Incluir:
-                  * Informações gerais completas
-                  * Especificações técnicas detalhadas
-                  * Quantidades e valores
-                  * Prazos e condições
-                  * Requisitos técnicos
-                  * Condições comerciais
-                  * Contatos completos
-                - Usar títulos em português para as seções internas, mas nunca um título geral como 'Resumo Técnico'
-                - Manter consistência na formatação
-                
-                REGRAS GERAIS:
-                - SEMPRE em português
-                - Formatação Markdown consistente
-                - Títulos com # e ## apenas para seções internas, nunca para o resumo como um todo
-                - Listas com - e **negrito** para destaque
-                - Informações organizadas em seções claras
-                - Linguagem profissional mas acessível
-                - Nunca adicione um título geral como 'Resumo Técnico' ou 'Resumo Executivo' no início do texto
-                
-                IMPORTANTE: Identifique também:
-                1. A cidade/UF do edital (procure no metadata ou no texto)
-                2. A data de abertura (opening_date) no formato DD/MM/YYYY (apenas a data, sem hora)
-                3. Informações de contato:
-                   - phone: telefone de contato
-                   - website: site oficial
-                   - email: email de contato
-                4. Outras informações (em formato texto):
-                   - title: título do edital
-                   - object: objeto da licitação
-                   - quantities: quantidades relevantes (ex: '100 unidades de tablets')
-                   - specifications: especificações técnicas (ex: 'Tablets com tela de 10 polegadas')
-                   - deadlines: prazos importantes (ex: 'Entrega em 30 dias')
-                   - values: valores relevantes (ex: 'Valor total de R$ 500.000,00')
-                Se não encontrar alguma informação, use string vazia"""},
-                {"role": "user", "content": f"""
-                Target: {self.target}
-                
-                Metadata:
-                {json.dumps(self.state.metadata, ensure_ascii=False, indent=2)}
-                
-                Conteúdo do Edital:
-                {self.state.content}
-                """}
-            ]
-        )
+        print(f"🔍 generate_summary: Iniciando chamada ao LLM...")
+        print(f"🔍 generate_summary: Modelo: {os.getenv('LLM_MODEL', 'N/A')}")
+        print(f"🔍 generate_summary: Base URL: {os.getenv('LLM_BASE_URL', 'N/A')}")
+        print(f"🔍 generate_summary: Tamanho do conteúdo: {len(self.state.content)} caracteres")
+        print(f"🔍 generate_summary: Tamanho do metadata: {len(json.dumps(self.state.metadata, ensure_ascii=False))} caracteres")
         
-        response_dict = json.loads(response)
+        try:
+            response = llm.call(
+                messages=[
+                    {"role": "system", "content": """Você é um especialista em resumir editais de licitação.
+                    Sua tarefa é gerar DOIS tipos de resumo: executivo e técnico, ambos em formato Markdown e em PORTUGUÊS.
+                    
+                    RESUMO EXECUTIVO (executive_summary):
+                    - Foco comercial e direto
+                    - Máximo 150 palavras
+                    - Formato Markdown limpo e profissional
+                    - NÃO adicione nenhum título como 'Resumo Executivo' ou similar
+                    - Incluir:
+                      * Cidade/UF
+                      * Valor Monetário total estimado (se disponível)
+                      * Data de abertura (com data e hora)
+                      * Quantidades principais (resumidas)
+                      * Contatos essenciais
+                    - NÃO incluir especificações técnicas ou detalhes operacionais
+                    - Linguagem comercial e acessível
+                    
+                    RESUMO TÉCNICO (technical_summary):
+                    - Detalhado e completo
+                    - Máximo 1500 palavras
+                    - Formato Markdown estruturado e profissional
+                    - NÃO adicione nenhum título como 'Resumo Técnico' ou similar
+                    - Incluir:
+                      * Informações gerais completas
+                      * Especificações técnicas detalhadas
+                      * Quantidades e valores
+                      * Prazos e condições
+                      * Requisitos técnicos
+                      * Condições comerciais
+                      * Contatos completos
+                    - Usar títulos em português para as seções internas, mas nunca um título geral como 'Resumo Técnico'
+                    - Manter consistência na formatação
+                    
+                    REGRAS GERAIS:
+                    - SEMPRE em português
+                    - Formatação Markdown consistente
+                    - Títulos com # e ## apenas para seções internas, nunca para o resumo como um todo
+                    - Listas com - e **negrito** para destaque
+                    - Informações organizadas em seções claras
+                    - Linguagem profissional mas acessível
+                    - Nunca adicione um título geral como 'Resumo Técnico' ou 'Resumo Executivo' no início do texto
+                    
+                    IMPORTANTE: Identifique também:
+                    1. A cidade/UF do edital (procure no metadata ou no texto)
+                    2. A data de abertura (opening_date) no formato DD/MM/YYYY (apenas a data, sem hora)
+                    3. Informações de contato:
+                       - phone: telefone de contato
+                       - website: site oficial
+                       - email: email de contato
+                    4. Outras informações (em formato texto):
+                       - title: título do edital
+                       - object: objeto da licitação
+                       - quantities: quantidades relevantes (ex: '100 unidades de tablets')
+                       - specifications: especificações técnicas (ex: 'Tablets com tela de 10 polegadas')
+                       - deadlines: prazos importantes (ex: 'Entrega em 30 dias')
+                       - values: valores relevantes (ex: 'Valor total de R$ 500.000,00')
+                    Se não encontrar alguma informação, use string vazia"""},
+                    {"role": "user", "content": f"""
+                    Target: {self.target}
+                    
+                    Metadata:
+                    {json.dumps(self.state.metadata, ensure_ascii=False, indent=2)}
+                    
+                    Conteúdo do Edital:
+                    {self.state.content}
+                    """}
+                ]
+            )
+            
+            print(f"🔍 generate_summary: Resposta recebida do LLM")
+            print(f"🔍 generate_summary: Tamanho da resposta: {len(response) if response else 0} caracteres")
+            print(f"🔍 generate_summary: Primeiros 200 caracteres da resposta: {response[:200] if response else 'RESPOSTA VAZIA'}")
+            
+            if not response or not response.strip():
+                print(f"❌ generate_summary: Resposta vazia do LLM")
+                raise ValueError("Resposta vazia do LLM")
+            
+            # Tenta fazer parse do JSON
+            print(f"🔍 generate_summary: Tentando fazer parse do JSON...")
+            response_dict = json.loads(response)
+            print(f"✅ generate_summary: JSON parseado com sucesso")
+            
+        except json.JSONDecodeError as e:
+            print(f"❌ generate_summary: Erro ao fazer parse do JSON: {str(e)}")
+            print(f"❌ generate_summary: Resposta completa: {response}")
+            raise ValueError(f"Resposta do LLM não é um JSON válido: {str(e)}")
+        except Exception as e:
+            print(f"❌ generate_summary: Erro na chamada ao LLM: {str(e)}")
+            raise
         response_obj = SummaryAnalysis(**response_dict)
         cleaned_data = response_obj.clean_empty_fields()
         
@@ -249,14 +323,13 @@ class EditalAnalysisFlow(Flow[EditalState]):
     @handle_flow_error
     def analyze_target(self):
         """Analisa se o edital é relevante para o target."""
-        llm = LLM(
-            model="gpt-4o",
+        llm = create_llm(
             temperature=0.7,
             max_tokens=1000,
             top_p=0.9,
             frequency_penalty=0.1,
             presence_penalty=0.1,
-            response_format=TargetAnalysis
+            response_format=TargetAnalysis,
         )
 
         response = llm.call(
@@ -304,14 +377,13 @@ class EditalAnalysisFlow(Flow[EditalState]):
             self.state.threshold_match = "false"
             return
 
-        llm = LLM(
-            model="gpt-4o",
+        llm = create_llm(
             temperature=0.7,
             max_tokens=1000,
             top_p=0.9,
             frequency_penalty=0.1,
             presence_penalty=0.1,
-            response_format=QuantitiesAnalysis
+            response_format=QuantitiesAnalysis,
         )
 
         response = llm.call(
@@ -388,13 +460,12 @@ class EditalAnalysisFlow(Flow[EditalState]):
     @handle_flow_error
     def generate_justification(self):
         """Gera justificativa para a decisão."""
-        llm = LLM(
-            model="gpt-4o",
+        llm = create_llm(
             temperature=0.7,
             max_tokens=200,
             top_p=0.9,
             frequency_penalty=0.1,
-            presence_penalty=0.1
+            presence_penalty=0.1,
         )
 
         response = llm.call(
